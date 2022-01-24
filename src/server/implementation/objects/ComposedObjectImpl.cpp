@@ -16,6 +16,7 @@
  */
 #include "ComposedObjectImpl.hpp"
 #include <MediaElementImpl.hpp>
+#include <ElementConnectionData.hpp>
 #include <MediaPipelineImpl.hpp>
 #include <gst/gst.h>
 #include <jsonrpc/JsonSerializer.hpp>
@@ -71,8 +72,8 @@ ComposedObjectImpl::disconnectBridgeSignals ()
 {
 	connElementConnectedSrc.disconnect ();
 	connElementConnectedSink.disconnect ();
-	connElementDisconnectedSrc.disconnect ();
-	connElementDisconnectedSink.disconnect ();
+	//connElementDisconnectedSrc.disconnect ();
+	//connElementDisconnectedSink.disconnect ();
 	connErrorSrc.disconnect ();
 	connErrorSink.disconnect ();
 }
@@ -205,7 +206,7 @@ ComposedObjectImpl::connectBridgeSignals ()
 		  raiseEvent<ElementConnected> (event, sth, signalElementConnected);
 	  });
 
-	  connElementDisconnectedSrc = std::dynamic_pointer_cast<MediaElementImpl>(srcPt)->signalElementDisconnected.connect([ &, wt ] (
+	/*  connElementDisconnectedSrc = std::dynamic_pointer_cast<MediaElementImpl>(srcPt)->signalElementDisconnected.connect([ &, wt ] (
 			  ElementDisconnected event) {
 		  try {
 			  std::shared_ptr<MediaObject> sth = wt.lock ();
@@ -239,7 +240,7 @@ ComposedObjectImpl::connectBridgeSignals ()
 		  } catch (const std::bad_weak_ptr &e) {
 			    // shared_from_this()
 		  }
-	  });
+	  }); */
 
 	  connErrorSrc = std::dynamic_pointer_cast<MediaElementImpl>(srcPt)->signalError.connect([ &, wt ] (
 			  Error event) {
@@ -310,6 +311,8 @@ ComposedObjectImpl::postConstructor ()
 {
   MediaElementImpl::postConstructor ();
 
+  // FIXME: Consider instead of this "hack" to build a gstreamer bin that contains the passthrough elements and the 
+  // dynamically changed SipRtpEndpoint, some kind of "subpipeline"
   origElem = getGstreamerElement ();
   element = srcPt->getGstreamerElement();
 
@@ -328,13 +331,13 @@ ComposedObjectImpl::StaticConstructor::StaticConstructor()
 void ComposedObjectImpl::linkMediaElement(std::shared_ptr<MediaElement> linkSrc, std::shared_ptr<MediaElement> linkSink)
 {
 	GST_DEBUG ("Linking object to facade");
-	linkMutex.lock();
+	std::unique_lock<std::recursive_mutex> linkLock (linkMutex);
 
 	// Unlink source and sink from previous composed object
 	if (linkedSource != NULL) {
 		// Unlink source
 		linkedSource->disconnect(sinkPt);
-
+		
 		disconnectElementSrcSignals ();
 	}
 	if (linkedSink != NULL) {
@@ -360,8 +363,6 @@ void ComposedObjectImpl::linkMediaElement(std::shared_ptr<MediaElement> linkSrc,
 
 		connectElementSinkSignals ();
 	}
-
-	linkMutex.unlock();
 }
 
 
@@ -422,6 +423,38 @@ void ComposedObjectImpl::disconnect (std::shared_ptr<MediaElement> sink,
 	this->sinkPt->disconnect (sink, mediaType, sourceMediaDescription, DEFAULT);
 }
 
+void ComposedObjectImpl::prepareSinkConnection (std::shared_ptr<MediaElement> src,
+                                      std::shared_ptr<MediaType> mediaType,
+                                      const std::string &sourceMediaDescription,
+                                      const std::string &sinkMediaDescription)
+{ 
+	// This method shouldn't be needed if it not were to the implementation of MediaElementImpl::disconnectAll that instead 
+	// of calling the virtual method disconnect on each sink, it calls the MediaElementImpl::disconnect methods, making it 
+	// impossible for the overloading done in this module to work, and causing an infinite loop trying to disconnect
+	//
+	// Well, in fact the problem is also caused by the fact that as we use intermediate PassThrough objects when connecting
+	// a MediaElement to this SipRtpEndpoint where another mediaElement was previously connected to this same SipRtpEndpoint 
+	// The connection process leaves a dangling sink connection on previous MediaElmenent. Then, when a disconnectAll is called
+	// on that MediaElement, it will try to disconnect that dangling sink connection, but as it calls MediaElementImpl::disconnect
+	// instead of this object overloaded method, it causes an inifinite loop
+	std::vector<std::shared_ptr<ElementConnectionData>> connections;
+
+	GST_DEBUG ("Preparing Connecting (%s) facade (%s) to sink", mediaType->getString().c_str(), sourceMediaDescription.c_str());
+
+	//Check if connection present for this object (not for the srcPt object)
+	connections = MediaElementImpl::getSourceConnections(mediaType, sinkMediaDescription);
+
+	// And if so, disconnect them so that all MediaElements get to a clean state
+	if (!connections.empty () ) {
+    	std::shared_ptr <ElementConnectionData> connection = connections.at (0);
+		GST_DEBUG("Removing Connection source %s, connection sink %s", connection->getSource()->getName().c_str(), connection->getSink()->getName().c_str());
+    	connection->getSource()->disconnect (connection->getSink (), mediaType,
+                                         sourceMediaDescription,
+                                         connection->getSinkDescription () );
+  	}
+
+
+}
 
 
 
