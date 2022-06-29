@@ -1,3 +1,9 @@
+kms-siprtpendpoint (1.0.0.18.04~20210728095528.gbp65a781+dp1-1~debify11+2) debify-bullseye; urgency=medium
+
+  * Build with patch for connectForwardSignals
+
+ -- Daniel Pocock <daniel@pocock.pro>  Wed, 29 Jun 2022 15:11:55 +0200
+
 kms-siprtpendpoint (1.0.0.18.04~20210728095528.gbp65a781+dp1-1~debify11+1) debify-bullseye; urgency=medium
 
   * Update for v1.0.0.18.04~20210728095528.gbp65a781+dp1-1~debify11+1
